@@ -1,8 +1,14 @@
 import json
+import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
+from tavily import TavilyClient
+
+#后端启动命令：uvicorn backend:app --reload
+#前端启动命令：npm run dev
+#启动时需要注意文件路径
 
 # 初始化后端
 app = FastAPI()
@@ -17,12 +23,44 @@ app.add_middleware(
 )
 
 # DeepSeek API Key
-client = OpenAI(api_key="你的deepseekAPI", base_url="https://api.deepseek.com/v1")
+client = OpenAI(api_key="sk-xxxxxxxxxxxxx", base_url="https://api.deepseek.com/v1")
+
+# Tavily 搜索 API Key
+tavily_client = TavilyClient(api_key="tvly-xxxxxxxxxxxxx")
+
+# ========== 0. 会话存储 & 系统提示词 ==========
+sessions: dict[str, list[dict]] = {}
+
+SYSTEM_PROMPT = {
+    "role": "system",
+    "content": (
+        "你是一个专业的学习规划助手，名叫「AI 全能学习 Agent」。"
+        "你能够根据用户的学习目标制定分天学习计划，也能搜索推荐学习资源。"
+        "请合理调用工具，并给出清晰、结构化、有鼓励性的中文建议。"
+        "如果用户追问之前的计划，请结合对话历史中的上下文来回答。"
+    )
+}
+
+# 上下文窗口：保留最近 N 轮对话（1 轮 = user + assistant 各一条）
+MAX_HISTORY_ROUNDS = 10
+
+# 多轮迭代：Agent 单次请求中最多调用工具的次数上限
+MAX_AGENT_ITERATIONS = 8
+
+
+def manage_context_window(history: list[dict]) -> list[dict]:
+    """滑动窗口：始终保留 system prompt，裁剪非系统消息到最近 N 轮"""
+    system_msgs = [m for m in history if m["role"] == "system"]
+    chat_msgs = [m for m in history if m["role"] != "system"]
+    # 保留最近 2*MAX_HISTORY_ROUNDS 条聊天消息
+    trimmed = chat_msgs[-(2 * MAX_HISTORY_ROUNDS):]
+    return system_msgs + trimmed
 
 
 # 定义前端传入的数据结构
 class UserQuery(BaseModel):
     prompt: str
+    session_id: str = ""   # 空字符串 → 自动创建新会话
 
 
 # ========== 1. 定义工具函数 ==========
@@ -31,11 +69,30 @@ def tool_plan_study(goal: str, days: int = 5):
 
 
 def tool_search_resources(keyword: str):
-    return "\n".join([
-        f"【实战教程】{keyword} 从零到精通 - 哔哩哔哩",
-        f"【官方文档】{keyword} 最新 API 手册",
-        f"【博客精选】{keyword} 必踩的 10 个坑"
-    ])
+    """通过 Tavily 真实搜索学习资源"""
+    try:
+        response = tavily_client.search(
+            query=f"{keyword} 学习教程 入门",
+            search_depth="basic",
+            max_results=5,
+        )
+        results = response.get("results", [])
+        if not results:
+            return f"未找到关于「{keyword}」的学习资源，请尝试更换关键词。"
+
+        lines = []
+        for r in results:
+            title = r.get("title", "无标题")
+            url = r.get("url", "")
+            content = r.get("content", "")[:200]  # 截取前 200 字符
+            lines.append(
+                f"📖 **{title}**\n"
+                f"   {content}\n"
+                f"   🔗 {url}"
+            )
+        return "\n\n".join(lines)
+    except Exception as e:
+        return f"搜索失败: {str(e)}"
 
 
 # ========== 2. 定义工具描述 (让大模型知道能干啥) ==========
@@ -59,7 +116,7 @@ tools = [
         "type": "function",
         "function": {
             "name": "tool_search_resources",
-            "description": "搜索特定学习主题的相关资源链接或推荐。",
+            "description": "联网搜索特定学习主题的真实资源、教程和文章链接，返回标题、摘要和 URL。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -75,23 +132,42 @@ tools = [
 # ========== 3. 核心 API 接口 ==========
 @app.post("/api/agent")
 async def run_agent(query: UserQuery):
-    messages = [{"role": "user", "content": query.prompt}]
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=messages,
-        tools=tools,
-        tool_choice="auto"
-    )
-    response_message = response.choices[0].message
-    tool_calls = response_message.tool_calls
-    agent_logs = []
+    # --- 会话管理 ---
+    sid = query.session_id or str(uuid.uuid4())
+    if sid not in sessions:
+        sessions[sid] = [SYSTEM_PROMPT]
 
-    if tool_calls:
+    history = sessions[sid]
+    history.append({"role": "user", "content": query.prompt})
+
+    # --- 上下文窗口裁剪 ---
+    messages = manage_context_window(history)
+
+    # --- 多轮迭代 Agent 循环 ---
+    agent_logs = []
+    final_answer = ""
+
+    for iteration in range(1, MAX_AGENT_ITERATIONS + 1):
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
+        )
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
+
+        # 没有工具调用 → LLM 认为信息够了，这就是最终答案
+        if not tool_calls:
+            final_answer = response_message.content
+            break
+
+        # 有工具调用 → 执行并追加结果，继续下一轮
         messages.append(response_message)
         for tool_call in tool_calls:
             func_name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
-            agent_logs.append(f"🛠️ 调用 {func_name}, 参数: {args}")
+            agent_logs.append(f"🔁 第{iteration}轮 → 🛠️ 调用 {func_name}, 参数: {args}")
 
             if func_name == "tool_plan_study":
                 result = tool_plan_study(**args)
@@ -107,10 +183,26 @@ async def run_agent(query: UserQuery):
                 "content": result
             })
 
-        second_response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages
-        )
-        return {"logs": agent_logs, "answer": second_response.choices[0].message.content}
     else:
-        return {"logs": [], "answer": response_message.content}
+        # for 循环正常结束（从未 break）→ 达到最大迭代次数
+        final_answer = "⚠️ Agent 已达到最大思考轮次上限，请尝试缩小问题范围后重新提问。"
+        agent_logs.append(f"⛔ 已达最大迭代次数 {MAX_AGENT_ITERATIONS}，强制终止")
+
+    # --- 持久化本轮对话到会话历史 ---
+    history.append({"role": "assistant", "content": final_answer})
+    sessions[sid] = history
+
+    return {
+        "session_id": sid,
+        "logs": agent_logs,
+        "answer": final_answer
+    }
+
+
+# ========== 4. 清除会话接口 ==========
+@app.post("/api/clear")
+async def clear_session(data: dict):
+    sid = data.get("session_id", "")
+    if sid in sessions:
+        del sessions[sid]
+    return {"status": "ok"}

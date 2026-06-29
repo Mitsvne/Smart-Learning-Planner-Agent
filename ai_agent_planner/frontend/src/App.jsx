@@ -1,14 +1,39 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+const SESSION_STORAGE_KEY = 'ai_agent_session_id';
+const MESSAGES_STORAGE_KEY = 'ai_agent_messages';
+
 function App() {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    // 页面返回时从 localStorage 恢复聊天记录
+    try {
+      const saved = localStorage.getItem(MESSAGES_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
+  const [sessionId, setSessionId] = useState(() => {
+    // 页面刷新后尝试恢复 session，失败则创建新会话
+    return localStorage.getItem(SESSION_STORAGE_KEY) || crypto.randomUUID();
+  });
   const messagesEndRef = useRef(null);
+
+  // session_id 变化时持久化到 localStorage
+  useEffect(() => {
+    localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  }, [sessionId]);
+
+  // 消息变化时持久化到 localStorage，防止页面跳转后丢失
+  useEffect(() => {
+    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages));
+  }, [messages]);
 
   // 自动滚动到底部
   const scrollToBottom = () => {
@@ -30,7 +55,8 @@ function App() {
 
     try {
       const res = await axios.post('http://127.0.0.1:8000/api/agent', {
-        prompt: userMsg.content
+        prompt: userMsg.content,
+        session_id: sessionId
       });
 
       setLogs(res.data.logs);
@@ -49,6 +75,18 @@ function App() {
     }
   };
 
+  const handleNewSession = useCallback(() => {
+    const newId = crypto.randomUUID();
+    // 异步通知后端清除旧会话（不阻塞 UI）
+    axios.post('http://127.0.0.1:8000/api/clear', {
+      session_id: sessionId
+    }).catch(() => {});
+    setSessionId(newId);
+    setMessages([]);
+    setLogs([]);
+    localStorage.removeItem(MESSAGES_STORAGE_KEY);
+  }, [sessionId]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -65,6 +103,12 @@ function App() {
           <h1 className="text-xl font-bold text-gray-800">AI 全能学习 Agent</h1>
           <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">全栈版</span>
         </div>
+        <button
+          onClick={handleNewSession}
+          className="px-3 py-1.5 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1"
+        >
+          🆕 新对话
+        </button>
       </div>
 
       {/* 聊天消息区域 */}
@@ -80,11 +124,10 @@ function App() {
         {messages.map((msg, index) => (
           <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-              msg.role === 'user' 
-                ? 'bg-blue-600 text-white rounded-br-none' 
+              msg.role === 'user'
+                ? 'bg-blue-600 text-white rounded-br-none'
                 : 'bg-white border border-gray-100 text-gray-800 rounded-bl-none'
             }`}>
-              {/* 关键修改：用 ReactMarkdown 替换了 pre 标签 */}
               {msg.role === 'user' ? (
                 <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed break-words">
                   {msg.content}

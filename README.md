@@ -4,4 +4,6 @@
 前端启动命令：npm run dev
 启动时需要注意文件路径
 效果演示图片
-<img width="2558" height="3140" alt="image" src="https://github.com/user-attachments/assets/03c93e69-f97e-47b3-8ca1-d1763fead7f2" />
+<img width="2558" height="3457" alt="image" src="https://github.com/user-attachments/assets/7d958f70-7819-4df1-b516-57274e62c298" />
+
+

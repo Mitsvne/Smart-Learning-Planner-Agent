@@ -1,0 +1,5 @@
+后端依赖安装：pip install -r requirements.txt
+后端启动命令：uvicorn backend:app --reload
+前端依赖安装：npm install
+前端启动命令：npm run dev
+启动时需要注意文件路径：后端在根文件夹，前端在fronted文件夹

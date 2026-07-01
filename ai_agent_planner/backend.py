@@ -34,10 +34,10 @@ app.add_middleware(
 )
 
 # DeepSeek API Key
-client = OpenAI(api_key="sk-4c4a96e64b814d39aabe0ceeb24b863a", base_url="https://api.deepseek.com/v1")
+client = OpenAI(api_key="sk-sk-xxxxxxxxxxxxxxxx", base_url="https://api.deepseek.com/v1")
 
 # Tavily 搜索 API Key（去 https://app.tavily.com 注册，免费 1000 次/月）
-tavily_client = TavilyClient(api_key="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")
+tavily_client = TavilyClient(api_key="tvly-xxxxxxxxxxxxxxxx")
 
 # ========== 0. 数据库持久化 & 系统提示词 ==========
 import os

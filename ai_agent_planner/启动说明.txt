@@ -3,3 +3,8 @@
 前端依赖安装：npm install
 前端启动命令：npm run dev
 启动时需要注意文件路径：后端在根文件夹，前端在fronted文件夹
+# DeepSeek API Key
+client = OpenAI(api_key="sk-xxxxxxxxxxxxxxxx", base_url="https://api.deepseek.com/v1")
+# Tavily 搜索 API Key
+tavily_client = TavilyClient(api_key="tvly-xxxxxxxxxxxxxxxx")
+中的sk-xxxxxxxxxxxxxxxx和tvly-xxxxxxxxxxxxxxxx换成你自己的api

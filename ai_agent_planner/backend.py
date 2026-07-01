@@ -17,10 +17,6 @@ OpenAI：OpenAI 官方 Python 库，此处用它调用 DeepSeek 的 API（兼容
 TavilyClient：Tavily 搜索 API 的客户端，用于联网搜索学习资源。
 '''
 
-#后端启动命令：uvicorn backend:app --reload
-#前端启动命令：npm run dev
-#启动时需要注意文件路径
-
 # 创建 FastAPI 应用实例
 app = FastAPI()
 
